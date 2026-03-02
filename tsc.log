@@ -1,0 +1,4 @@
+﻿ar/main.ts(127,46): error TS18047: 'config' is possibly 'null'.
+ar/main.ts(133,45): error TS18047: 'config' is possibly 'null'.
+ar/main.ts(164,18): error TS6133: 'timestamp' is declared but its value is never read.
+ar/main.ts(171,17): error TS2722: Cannot invoke an object which is possibly 'undefined'.
