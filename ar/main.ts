@@ -2,10 +2,11 @@ import '../src/style.css';
 import * as THREE from 'three';
 import { ARButton } from 'three/examples/jsm/webxr/ARButton.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { loadEnv, getSlugFromUrl, EnvConfig } from '../src/shared/config';
 import { track } from '../src/shared/analytics';
 
-const uiEl = document.getElementById('ar-ui')!;
+let uiEl: HTMLElement;
 let config: EnvConfig | null = null;
 let audio: HTMLAudioElement | null = null;
 
@@ -13,6 +14,7 @@ let camera: THREE.PerspectiveCamera;
 let scene: THREE.Scene;
 let renderer: THREE.WebGLRenderer;
 let controller: THREE.XRTargetRaySpace;
+let controls: OrbitControls;
 
 let reticle: THREE.Mesh;
 let hitTestSource: XRHitTestSource | null = null;
@@ -21,10 +23,19 @@ let hitTestSourceRequested = false;
 let placedObject: THREE.Object3D | null = null;
 const raycaster = new THREE.Raycaster();
 
+enum Platform {
+    iOS,
+    WebXR,
+    Desktop
+}
+
+let currentPlatform: Platform = Platform.Desktop;
+
 async function init() {
+    uiEl = document.getElementById('ar-ui')!;
     const slug = getSlugFromUrl();
     if (!slug) {
-        uiEl.innerHTML = '<p>Error: Falta el slug en URL.</p>';
+        if (uiEl) uiEl.innerHTML = '<p>Error: Falta el slug en URL.</p>';
         return;
     }
 
@@ -36,6 +47,7 @@ async function init() {
         }
         track('ar_init', { slug });
 
+        await checkPlatform();
         initThree();
     } catch (err) {
         console.error(err);
@@ -43,12 +55,32 @@ async function init() {
     }
 }
 
+async function checkPlatform() {
+    // Check for iOS
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+
+    if (isIOS) {
+        currentPlatform = Platform.iOS;
+        return;
+    }
+
+    // Check for WebXR support
+    if ('xr' in navigator) {
+        const isSupported = await (navigator as any).xr.isSessionSupported('immersive-ar');
+        if (isSupported) {
+            currentPlatform = Platform.WebXR;
+            return;
+        }
+    }
+
+    currentPlatform = Platform.Desktop;
+}
+
 function initThree() {
     const container = document.createElement('div');
     document.body.appendChild(container);
 
     scene = new THREE.Scene();
-
     camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
 
     const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
@@ -58,18 +90,27 @@ function initThree() {
     renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.xr.enabled = true;
     container.appendChild(renderer.domElement);
 
-    // ARButton adds the "Start AR" button
+    if (currentPlatform === Platform.WebXR) {
+        setupWebXR();
+    } else if (currentPlatform === Platform.iOS) {
+        setupIOS();
+    } else {
+        setupDesktop();
+    }
+
+    window.addEventListener('resize', onWindowResize);
+}
+
+function setupWebXR() {
+    renderer.xr.enabled = true;
     document.body.appendChild(ARButton.createButton(renderer, { requiredFeatures: ['hit-test'] }));
 
-    // XR Controller
     controller = renderer.xr.getController(0);
     controller.addEventListener('select', onSelect);
     scene.add(controller);
 
-    // Reticle
     reticle = new THREE.Mesh(
         new THREE.RingGeometry(0.15, 0.2, 32).rotateX(-Math.PI / 2),
         new THREE.MeshBasicMaterial({ color: 0x00ff00 })
@@ -78,9 +119,41 @@ function initThree() {
     reticle.visible = false;
     scene.add(reticle);
 
-    window.addEventListener('resize', onWindowResize);
-
     renderer.setAnimationLoop(animate);
+}
+
+function setupIOS() {
+    uiEl.innerHTML += `
+        <div style="margin-top: 1rem;">
+            <a href="${config?.usdz_url}" rel="ar" style="
+                display: inline-block;
+                padding: 10px 20px;
+                background: #007AFF;
+                color: white;
+                text-decoration: none;
+                border-radius: 10px;
+                font-weight: bold;
+            ">Ver en AR (iOS)</a>
+        </div>
+    `;
+    // Fallback to desktop viewer on top of the link
+    setupDesktop();
+}
+
+function setupDesktop() {
+    camera.position.set(0, 0.5, 1.5);
+    controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+
+    uiEl.innerHTML += '<p style="font-size: 0.8em; opacity: 0.7;">(Vista 3D Interactiva)</p>';
+
+    // Load model immediately for desktop/viewer
+    loadModelAt(new THREE.Vector3(0, 0, 0));
+
+    renderer.setAnimationLoop(() => {
+        controls.update();
+        renderer.render(scene, camera);
+    });
 }
 
 function onWindowResize() {
@@ -90,26 +163,27 @@ function onWindowResize() {
 }
 
 function onSelect() {
+    if (currentPlatform !== Platform.WebXR) {
+        checkInteraction();
+        return;
+    }
+
     if (reticle.visible && !placedObject) {
-        placeObject();
+        const position = new THREE.Vector3().setFromMatrixPosition(reticle.matrix);
+        loadModelAt(position);
     } else if (placedObject) {
         checkInteraction();
     }
 }
 
-function placeObject() {
+function loadModelAt(position: THREE.Vector3) {
     if (!config) return;
 
-    uiEl.innerHTML = '<p>Cargando modelo...</p>';
-
-    // Create a placeholder while loading
     const material = new THREE.MeshPhongMaterial({ color: 0xffffff * Math.random() });
     const placeholder = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 0.2), material);
-    placeholder.position.setFromMatrixPosition(reticle.matrix);
+    placeholder.position.copy(position);
     scene.add(placeholder);
     placedObject = placeholder;
-
-    track('ar_model_placing', { slug: config.slug });
 
     const loader = new GLTFLoader();
     loader.load(
@@ -117,36 +191,39 @@ function placeObject() {
         (gltf) => {
             scene.remove(placeholder);
             const model = gltf.scene;
-            model.position.setFromMatrixPosition(reticle.matrix);
-            // scale if needed, assuming 1 unit = 1 meter
-            model.scale.set(1, 1, 1);
-
+            model.position.copy(position);
             scene.add(model);
             placedObject = model;
-            uiEl.innerHTML = '<p>¡Toca el animal para interactuar!</p>';
             track('ar_model_loaded', { slug: config!.slug });
         },
         undefined,
         (error) => {
-            console.warn('Fallback: Failed to load GLTF, using placeholder', error);
-            uiEl.innerHTML = '<p>¡Modelo no encontrado! (Placeholder cargado)</p>';
+            console.warn('Fallback: Failed to load GLTF', error);
             track('ar_model_error', { slug: config!.slug });
         }
     );
 
-    reticle.visible = false;
+    if (reticle) reticle.visible = false;
 }
 
 function checkInteraction() {
-    // Raycast from controller to placed object
-    const tempMatrix = new THREE.Matrix4();
-    tempMatrix.identity().extractRotation(controller.matrixWorld);
+    let intersects: any[] = [];
 
-    raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
-    raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
+    if (currentPlatform === Platform.WebXR) {
+        const tempMatrix = new THREE.Matrix4();
+        tempMatrix.identity().extractRotation(controller.matrixWorld);
+        raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
+        raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
+    } else {
+        // Standard mouse/touch raycasting for desktop/ios viewer
+        // For simplicity in MVP, we just Raycast from camera center or handled by pointer
+        // In this viewer mode, let's keep it simple: any click on the scene plays audio if model loaded
+        playAudio();
+        return;
+    }
 
     if (placedObject) {
-        const intersects = raycaster.intersectObject(placedObject, true);
+        intersects = raycaster.intersectObject(placedObject, true);
         if (intersects.length > 0) {
             playAudio();
         }
@@ -162,7 +239,7 @@ function playAudio() {
 }
 
 function animate(_timestamp: number, frame: XRFrame | undefined) {
-    if (frame) {
+    if (frame && currentPlatform === Platform.WebXR) {
         const referenceSpace = renderer.xr.getReferenceSpace();
         const session = renderer.xr.getSession();
 
@@ -184,8 +261,6 @@ function animate(_timestamp: number, frame: XRFrame | undefined) {
 
         if (hitTestSource && referenceSpace) {
             const hitTestResults = frame.getHitTestResults(hitTestSource);
-
-            // Only show reticle if we haven't placed the object yet
             if (hitTestResults.length > 0 && !placedObject) {
                 const hit = hitTestResults[0];
                 const pose = hit.getPose(referenceSpace);
