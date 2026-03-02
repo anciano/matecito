@@ -1,6 +1,6 @@
 {
-    "slug": "huemul",
-    "title": "Huemul",
+    "slug": "matecito",
+    "title": "Matecito",
     "model_url": "http://172.233.16.94/cdn/models/matecito_basic.glb",
     "audio_preview_url": "http://172.233.16.94/cdn/audio/nature_simple.wav",
     "min_accuracy_m": 1,
@@ -9,5 +9,5 @@
         1,
         1
     ],
-    "ar_url": "/ar/?slug=huemul"
+    "ar_url": "/ar/?slug=matecito"
 }

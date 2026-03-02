@@ -19,6 +19,9 @@ appEl.innerHTML = `
     <p id="status">Obteniendo ubicación y configuración...</p>
     <div id="debug-info" style="font-size: 0.8em; color: #888; margin-top: 1rem;"></div>
     <button id="btn-ar" class="hidden">Abrir encuentro AR</button>
+    <div style="margin-top: 2rem;">
+      <button id="btn-force" style="font-size: 0.7em; opacity: 0.5;">Forzar Modo AR (Debug)</button>
+    </div>
   </div>
 `;
 
@@ -26,6 +29,7 @@ const titleEl = document.getElementById('title')!;
 const statusEl = document.getElementById('status')!;
 const debugEl = document.getElementById('debug-info')!;
 const btnAr = document.getElementById('btn-ar')! as HTMLButtonElement;
+const btnForce = document.getElementById('btn-force')! as HTMLButtonElement;
 
 let config: EnvConfig | null = null;
 let huntState: HuntState | null = null;
@@ -43,6 +47,11 @@ async function init() {
         titleEl.textContent = `Buscando: ${config.title}`;
         track('hunt_init', { slug });
         startTracking();
+
+        btnForce.onclick = () => {
+            if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+            window.location.href = config!.ar_url || `/ar/?slug=${config!.slug}`;
+        };
     } catch (err) {
         statusEl.innerHTML = `Error: No se pudo cargar la configuración para "${slug}".`;
         console.error(err);
@@ -78,10 +87,16 @@ function onPositionUpdate(pos: GeolocationPosition) {
 
     debugEl.innerHTML = `Precisión: ${accuracy.toFixed(1)}m`;
 
-    if (accuracy > config.min_accuracy_m) {
-        statusEl.innerHTML = `Precisión baja (${accuracy.toFixed(1)}m). Esperando mejor señal GPS...`;
+    // Relaxed for testing: Only block if accuracy > 150m.
+    // Otherwise, just show a warning but allow the logic to proceed.
+    if (accuracy > 150) {
+        statusEl.innerHTML = `Señal GPS muy débil (${accuracy.toFixed(1)}m). Esperando...`;
         btnAr.classList.add('hidden');
         return;
+    }
+
+    if (accuracy > config.min_accuracy_m) {
+        debugEl.innerHTML += ` <span style="color:orange">(Baja precisión)</span>`;
     }
 
     handleValidPosition(currentCoords);
