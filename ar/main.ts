@@ -141,14 +141,34 @@ function setupIOS() {
 }
 
 function setupDesktop() {
-    camera.position.set(0, 0.5, 1.5);
+    camera.position.set(0, 0, 2);
     controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
 
-    uiEl.innerHTML += '<p style="font-size: 0.8em; opacity: 0.7;">(Vista 3D Interactiva)</p>';
+    uiEl.innerHTML += '<p style="font-size: 0.8em; opacity: 0.7;">(Cámara Web Activa - Mueve al Matecito)</p>';
 
-    // Load model immediately for desktop/viewer
-    loadModelAt(new THREE.Vector3(0, 0, 0));
+    // Setup Webcam Background
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        const video = document.createElement('video');
+        video.setAttribute('autoplay', '');
+        video.setAttribute('muted', '');
+        video.setAttribute('playsinline', '');
+
+        navigator.mediaDevices.getUserMedia({ video: true })
+            .then((stream) => {
+                video.srcObject = stream;
+                video.play();
+                const videoTexture = new THREE.VideoTexture(video);
+                scene.background = videoTexture;
+            })
+            .catch((err) => {
+                console.error('No se pudo acceder a la webcam:', err);
+                uiEl.innerHTML += '<p style="color:red">Error webcam: Permitir acceso para AR Desktop</p>';
+            });
+    }
+
+    // Load model for Desktop (positioned to the side/shoulder area)
+    loadModelAt(new THREE.Vector3(0.5, -0.4, 0.5));
 
     renderer.setAnimationLoop(() => {
         controls.update();
@@ -179,26 +199,28 @@ function onSelect() {
 function loadModelAt(position: THREE.Vector3) {
     if (!config) return;
 
-    const material = new THREE.MeshPhongMaterial({ color: 0xffffff * Math.random() });
-    const placeholder = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 0.2), material);
-    placeholder.position.copy(position);
-    scene.add(placeholder);
-    placedObject = placeholder;
-
     const loader = new GLTFLoader();
     loader.load(
         config.model_url,
         (gltf) => {
-            scene.remove(placeholder);
+            if (placedObject) scene.remove(placedObject);
             const model = gltf.scene;
             model.position.copy(position);
+            // Default scale for GLB
+            model.scale.set(1, 1, 1);
             scene.add(model);
             placedObject = model;
             track('ar_model_loaded', { slug: config!.slug });
         },
         undefined,
         (error) => {
-            console.warn('Fallback: Failed to load GLTF', error);
+            console.warn('Fallback: Failed to load GLTF, using box', error);
+            if (placedObject) scene.remove(placedObject);
+            const material = new THREE.MeshPhongMaterial({ color: 0x666666 });
+            const placeholder = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 0.2), material);
+            placeholder.position.copy(position);
+            scene.add(placeholder);
+            placedObject = placeholder;
             track('ar_model_error', { slug: config!.slug });
         }
     );
@@ -207,23 +229,19 @@ function loadModelAt(position: THREE.Vector3) {
 }
 
 function checkInteraction() {
-    let intersects: any[] = [];
-
-    if (currentPlatform === Platform.WebXR) {
-        const tempMatrix = new THREE.Matrix4();
-        tempMatrix.identity().extractRotation(controller.matrixWorld);
-        raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
-        raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
-    } else {
-        // Standard mouse/touch raycasting for desktop/ios viewer
-        // For simplicity in MVP, we just Raycast from camera center or handled by pointer
-        // In this viewer mode, let's keep it simple: any click on the scene plays audio if model loaded
+    // For Desktop/iOS viewer, any click plays audio
+    if (currentPlatform !== Platform.WebXR) {
         playAudio();
         return;
     }
 
     if (placedObject) {
-        intersects = raycaster.intersectObject(placedObject, true);
+        const tempMatrix = new THREE.Matrix4();
+        tempMatrix.identity().extractRotation(controller.matrixWorld);
+        raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
+        raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
+
+        const intersects = raycaster.intersectObject(placedObject, true);
         if (intersects.length > 0) {
             playAudio();
         }
