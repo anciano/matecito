@@ -2,6 +2,7 @@
     "slug": "huemul",
     "title": "Huemul",
     "model_url": "/cdn/models/matecito_basic.glb",
+    "usdz_url": "/cdn/models/MATECITO.usdz",
     "audio_preview_url": "/cdn/audio/nature_simple.wav",
     "min_accuracy_m": 1,
     "min_move_m": 1,
