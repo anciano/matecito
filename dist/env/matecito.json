@@ -1,9 +1,9 @@
 {
     "slug": "matecito",
     "title": "Matecito",
-    "model_url": "http://172.233.16.94/cdn/models/matecito_basic.glb",
-    "usdz_url": "http://172.233.16.94/cdn/models/MATECITO.usdz",
-    "audio_preview_url": "http://172.233.16.94/cdn/audio/nature_simple.wav",
+    "model_url": "/cdn/models/matecito_basic.glb",
+    "usdz_url": "/cdn/models/MATECITO.usdz",
+    "audio_preview_url": "/cdn/audio/nature_simple.wav",
     "min_accuracy_m": 1,
     "min_move_m": 1,
     "spawn_distance_m": [
