@@ -285,6 +285,11 @@ function animate(_timestamp: number, frame: XRFrame | undefined) {
                 if (pose) {
                     reticle.visible = true;
                     reticle.matrix.fromArray(pose.transform.matrix);
+
+                    // AUTO-PLACEMENT: 
+                    // Se posiciona automáticamente en la primera superficie estable detectada.
+                    const position = new THREE.Vector3().setFromMatrixPosition(reticle.matrix);
+                    loadModelAt(position);
                 }
             } else {
                 reticle.visible = false;
