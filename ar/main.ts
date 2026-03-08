@@ -28,10 +28,19 @@ enum Platform {
 
 let currentPlatform: Platform = Platform.Desktop;
 let mindarThree: any = null;
+let currentFacingMode: 'user' | 'environment' = 'environment';
 
 async function init() {
     uiEl = document.getElementById('ar-ui')!;
     overlayEl = document.getElementById('scanning-overlay')!;
+
+    // Check for camera override in URL
+    const params = new URLSearchParams(window.location.search);
+    const faceParam = params.get('facingMode');
+    if (faceParam === 'user' || faceParam === 'environment') {
+        currentFacingMode = faceParam;
+    }
+
     const slug = getSlugFromUrl();
     if (!slug) {
         if (uiEl) uiEl.innerHTML = '<p>Error: Falta el slug en URL.</p>';
@@ -40,17 +49,63 @@ async function init() {
 
     try {
         config = await loadEnv(slug);
-        uiEl.innerHTML = `<p>Encuentro AR: ${config.title}</p>`;
+        updateUI();
         if (config.audio_preview_url) {
             audio = new Audio(config.audio_preview_url);
         }
-        track('ar_init', { slug });
+        track('ar_init', { slug, facingMode: currentFacingMode });
 
         await checkPlatform();
         initAR();
     } catch (err) {
         console.error(err);
         uiEl.innerHTML = '<p>Error al cargar configuración del AR.</p>';
+    }
+}
+
+function updateUI() {
+    if (!config) return;
+    uiEl.innerHTML = `
+        <div style="pointer-events: auto;">
+            <p style="margin:0"><strong>Encuentro AR:</strong> ${config.title}</p>
+            <button id="camera-toggle" style="
+                margin-top: 8px;
+                padding: 5px 10px;
+                background: #fff;
+                color: #000;
+                border: none;
+                border-radius: 4px;
+                font-size: 12px;
+                cursor: pointer;
+            ">🔄 Cámara: ${currentFacingMode === 'environment' ? 'Trasera' : 'Frontal'}</button>
+        </div>
+    `;
+
+    document.getElementById('camera-toggle')?.addEventListener('click', toggleCamera);
+}
+
+async function toggleCamera() {
+    currentFacingMode = currentFacingMode === 'environment' ? 'user' : 'environment';
+
+    // Update URL without reloading (optional, but good for bookmarking)
+    const url = new URL(window.location.href);
+    url.searchParams.set('facingMode', currentFacingMode);
+    window.history.replaceState({}, '', url.toString());
+
+    if (currentPlatform === Platform.MindAR && mindarThree) {
+        // Restart MindAR with new camera
+        await mindarThree.stop();
+        // Remove old video/canvas tags that MindAR might have added
+        const tags = document.querySelectorAll('video, canvas');
+        tags.forEach(t => {
+            if (t.parentNode === document.body && t !== renderer.domElement) {
+                t.remove();
+            }
+        });
+        setupMindAR();
+    } else {
+        // For Desktop/Fallback, we might need a full reload or just restart setupDesktop
+        window.location.reload();
     }
 }
 
@@ -83,11 +138,28 @@ async function initAR() {
 
 async function setupMindAR() {
     if (!config?.target_url) return;
+    updateUI(); // Refresh UI to show the correct camera mode
+
+    // Before starting, we override the navigator.mediaDevices.getUserMedia to force the facing mode
+    // MindAR uses this internally.
+    const originalGetUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+    navigator.mediaDevices.getUserMedia = (constraints: any) => {
+        if (constraints && constraints.video) {
+            if (typeof constraints.video === 'boolean') {
+                constraints.video = { facingMode: currentFacingMode };
+            } else {
+                constraints.video.facingMode = currentFacingMode;
+            }
+        }
+        return originalGetUserMedia(constraints);
+    };
 
     // Initialize MindAR Three.js wrapper
     mindarThree = new (window as any).MINDAR.IMAGE.MindARThree({
         container: document.body,
         imageTargetSrc: config.target_url,
+        uiLoading: "no",
+        uiScanning: "no",
     });
 
     const { renderer: mindRenderer, scene: mindScene, camera: mindCamera } = mindarThree;
@@ -114,14 +186,16 @@ async function setupMindAR() {
     // Events
     anchor.onTargetFound = () => {
         overlayEl.classList.add('hidden');
-        uiEl.innerHTML = `<p>${config?.title}: ¡Imagen detectada!</p>`;
+        const statusP = uiEl.querySelector('p');
+        if (statusP) statusP.innerHTML = `<strong>${config?.title}:</strong> ¡Imagen detectada!`;
         track('ar_target_found', { slug: config!.slug });
         playAudio();
     };
 
     anchor.onTargetLost = () => {
         overlayEl.classList.remove('hidden');
-        uiEl.innerHTML = `<p>Buscando imagen...</p>`;
+        const statusP = uiEl.querySelector('p');
+        if (statusP) statusP.innerHTML = `<strong>Encuentro AR:</strong> ${config?.title}`;
         track('ar_target_lost', { slug: config!.slug });
     };
 
@@ -175,7 +249,9 @@ function setupDesktop() {
     // Webcam background
     if (navigator.mediaDevices?.getUserMedia) {
         const video = document.createElement('video');
-        navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
+        navigator.mediaDevices.getUserMedia({
+            video: { facingMode: currentFacingMode }
+        }).then(stream => {
             video.srcObject = stream;
             video.play();
             scene.background = new THREE.VideoTexture(video);
