@@ -161,21 +161,38 @@ async function setupMindAR() {
         if (btn) btn.innerHTML = "Cargando...";
 
         try {
+            // 1. Check if MINDAR script loaded
+            if (!(window as any).MINDAR) {
+                throw new Error("Librería AR no cargada. Revisa tu conexión.");
+            }
+
+            // 2. Check if target file exists (Verify it's uploaded)
+            if (config?.target_url) {
+                const checkRes = await fetch(config.target_url, { method: 'HEAD' });
+                if (!checkRes.ok) {
+                    throw new Error(`No se encontró el marcador AR en: ${config.target_url}. ¿Olvidaste subirlo?`);
+                }
+            }
+
             // Before starting, we override the navigator.mediaDevices.getUserMedia
             const originalGetUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
-            navigator.mediaDevices.getUserMedia = (constraints: any) => {
-                if (constraints && constraints.video) {
-                    if (typeof constraints.video === 'boolean') {
-                        constraints.video = {
-                            facingMode: currentFacingMode,
-                            width: { ideal: 1280 },
-                            height: { ideal: 720 }
-                        };
-                    } else {
-                        constraints.video.facingMode = currentFacingMode;
+            navigator.mediaDevices.getUserMedia = async (constraints: any) => {
+                try {
+                    if (constraints && constraints.video) {
+                        if (typeof constraints.video === 'boolean') {
+                            constraints.video = {
+                                facingMode: currentFacingMode,
+                                width: { ideal: 1280 },
+                                height: { ideal: 720 }
+                            };
+                        } else {
+                            constraints.video.facingMode = currentFacingMode;
+                        }
                     }
+                    return await originalGetUserMedia(constraints);
+                } catch (e: any) {
+                    throw new Error("Permiso de cámara denegado o cámara en uso.");
                 }
-                return originalGetUserMedia(constraints);
             };
 
             // Initialize MindAR Three.js wrapper
@@ -240,9 +257,10 @@ async function setupMindAR() {
 
             overlayEl.innerHTML = '<p>Apunta la cámara a la hoja del libro...</p>';
 
-        } catch (err) {
+        } catch (err: any) {
             console.error(err);
             if (btn) btn.innerHTML = "Error (Reintentar)";
+            uiEl.innerHTML += `<p style="color:#ffcc00; font-size: 11px; margin-top: 5px;">${err.message}</p>`;
         }
     });
 }

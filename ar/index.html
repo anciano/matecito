@@ -48,14 +48,16 @@
             display: none;
         }
     </style>
-    <!-- MindAR dependencies -->
-    <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js"></script>
+    <!-- MindAR dependencies (Image tracking for Three.js) -->
+    <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.1.4/dist/mindar-image-three.prod.js"></script>
 </head>
 
 <body>
     <div id="app">
         <div id="scanning-overlay">
-            <p>Apunta la cámara a la hoja del libro...</p>
+            <div style="text-align: center;">
+                <p>Cargando escáner AR...</p>
+            </div>
         </div>
         <div id="ar-ui"></div>
     </div>
