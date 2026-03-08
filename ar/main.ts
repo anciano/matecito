@@ -39,7 +39,7 @@ function loadScript(src: string): Promise<void> {
         const script = document.createElement('script');
         script.src = src;
         script.onload = () => resolve();
-        script.onerror = () => reject(new Error(`Falló la carga de: ${src}`));
+        script.onerror = () => reject(new Error(`Falló: ${src}`));
         document.head.appendChild(script);
     });
 }
@@ -81,7 +81,7 @@ function updateUI(statusMsg: string = "") {
     uiEl.innerHTML = `
         <div style="pointer-events: auto;">
             <p style="margin:0"><strong>Encuentro AR:</strong> ${config.title}</p>
-            <div id="debug-status" style="font-size: 10px; color: #aaa; margin-top: 4px;">${statusMsg}</div>
+            <div id="debug-status" style="font-size: 10px; color: #ffcc00; margin-top: 4px;">${statusMsg}</div>
             <button id="camera-toggle" style="
                 margin-top: 8px;
                 padding: 5px 10px;
@@ -105,54 +105,28 @@ function setDebugStatus(msg: string) {
 
 async function toggleCamera() {
     currentFacingMode = currentFacingMode === 'environment' ? 'user' : 'environment';
-
     const url = new URL(window.location.href);
     url.searchParams.set('facingMode', currentFacingMode);
     window.history.replaceState({}, '', url.toString());
-
-    if (currentPlatform === Platform.MindAR && mindarThree) {
-        await mindarThree.stop();
-        const tags = document.querySelectorAll('video, canvas');
-        tags.forEach(t => {
-            if (t.parentNode === document.body) {
-                t.remove();
-            }
-        });
-        setupMindAR();
-    } else {
-        window.location.reload();
-    }
+    window.location.reload();
 }
 
 async function checkPlatform() {
     const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-
-    if (config?.target_url) {
-        currentPlatform = Platform.MindAR;
-        return;
-    }
-
-    if (isIOS) {
-        currentPlatform = Platform.iOS;
-        return;
-    }
-
+    if (config?.target_url) { currentPlatform = Platform.MindAR; return; }
+    if (isIOS) { currentPlatform = Platform.iOS; return; }
     currentPlatform = Platform.Desktop;
 }
 
 async function initAR() {
-    if (currentPlatform === Platform.MindAR) {
-        setupMindAR();
-    } else if (currentPlatform === Platform.iOS) {
-        setupIOS();
-    } else {
-        setupDesktop();
-    }
+    if (currentPlatform === Platform.MindAR) setupMindAR();
+    else if (currentPlatform === Platform.iOS) setupIOS();
+    else setupDesktop();
 }
 
 async function setupMindAR() {
     if (!config?.target_url) return;
-    updateUI("Iniciando...");
+    updateUI("Listo para iniciar");
 
     overlayEl.classList.remove('hidden');
     overlayEl.innerHTML = `
@@ -162,40 +136,32 @@ async function setupMindAR() {
                 padding: 15px 30px;
                 background: #28a745;
                 color: white;
-                border: none;
-                border-radius: 50px;
-                font-size: 18px;
-                font-weight: bold;
-                cursor: pointer;
-                box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+                border: none; border-radius: 50px;
+                font-size: 18px; font-weight: bold; cursor: pointer;
             ">Iniciar Cámara AR</button>
         </div>
     `;
 
     const startBtn = document.getElementById('start-ar-btn');
     startBtn?.addEventListener('click', async () => {
-        startBtn.innerHTML = "Configurando motor...";
-        startBtn.style.opacity = "0.7";
+        startBtn.innerHTML = "Cargando motor...";
         startBtn.style.pointerEvents = "none";
 
         try {
-            setDebugStatus("Cargando MindAR 1.1.4...");
+            setDebugStatus("Cargando MindAR...");
             await loadScript('https://cdn.jsdelivr.net/npm/mind-ar@1.1.4/dist/mindar-image-three.prod.js');
 
             const MIND = (window as any).MINDAR;
-            if (!MIND) throw new Error("MindAR fallo al registrarse.");
-
-            setDebugStatus("Cargando modelo...");
+            if (!MIND) throw new Error("Librería no encontrada");
 
             // Patch getUserMedia
             const originalGetUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
             navigator.mediaDevices.getUserMedia = async (constraints: any) => {
                 if (constraints && constraints.video) {
-                    if (typeof constraints.video === 'boolean') {
-                        constraints.video = { facingMode: currentFacingMode, width: { ideal: 1280 } };
-                    } else {
-                        constraints.video.facingMode = currentFacingMode;
-                    }
+                    constraints.video = {
+                        facingMode: currentFacingMode,
+                        width: { ideal: 1280 }
+                    };
                 }
                 return await originalGetUserMedia(constraints);
             };
@@ -212,93 +178,71 @@ async function setupMindAR() {
             scene = mScene;
             camera = mCamera;
 
-            // Tone mapping for better colors
-            renderer.outputColorSpace = THREE.SRGBColorSpace;
-            renderer.toneMapping = THREE.ACESFilmicToneMapping;
-
+            // Simple basic scene setup for visibility
             const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
             scene.add(light);
             scene.add(new THREE.AmbientLight(0xffffff, 0.8));
-            const sun = new THREE.DirectionalLight(0xffffff, 1);
-            sun.position.set(1, 1, 1);
-            scene.add(sun);
 
             const anchor = mindarThree.addAnchor(0);
 
-            // Debug Cube
-            const debugBox = new THREE.Mesh(
-                new THREE.BoxGeometry(0.1, 0.1, 0.1),
-                new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: true })
+            // 1. Red Cube - Basic implementation
+            const cube = new THREE.Mesh(
+                new THREE.BoxGeometry(0.2, 0.2, 0.2),
+                new THREE.MeshBasicMaterial({ color: 0xff0000 })
             );
-            debugBox.position.z = 0.05; // Elevated on MindAR Z-axis (forward)
-            anchor.group.add(debugBox);
+            cube.position.set(0, 0, 0);
+            anchor.group.add(cube);
 
-            // GLB Loader
+            setDebugStatus("Descargando Matecito...");
             const loader = new GLTFLoader();
             loader.load(config!.model_url, (gltf) => {
                 const model = gltf.scene;
 
-                // Disable frustum culling
-                model.traverse((node: any) => {
-                    if (node.isMesh) {
-                        node.frustumCulled = false;
-                        // node.material.color.set(0xff0000); // TEMP DEBUG
-                    }
-                });
-
-                // Auto scaling & centering
+                // Centering and scaling logic
                 const box = new THREE.Box3().setFromObject(model);
                 const size = box.getSize(new THREE.Vector3());
                 const center = box.getCenter(new THREE.Vector3());
 
-                // Reset then reposition
-                model.position.set(-center.x, -center.y, -center.z);
+                model.position.x += (model.position.x - center.x);
+                model.position.y += (model.position.y - center.y);
+                model.position.z += (model.position.z - center.z);
 
-                // Scale to roughly 1/2 of marker size
                 const maxDim = Math.max(size.x, size.y, size.z);
                 const scale = 0.5 / (maxDim || 1);
                 model.scale.set(scale, scale, scale);
 
-                // MindAR coordinate system tip: Typically marker is XY, Z is out.
-                // Let's rotate it to stand up.
+                // Ensure visibility
+                model.traverse((node: any) => {
+                    if (node.isMesh) node.frustumCulled = false;
+                });
+
+                // MindAR alignment
                 model.rotation.x = Math.PI / 2;
                 model.position.y += 0.05;
 
                 anchor.group.add(model);
                 placedObject = model;
-                setDebugStatus(`Modelo Listo (Scale: ${scale.toFixed(2)})`);
-                console.log("Model loaded successfully", { scale, size });
+                setDebugStatus(`Matecito OK (Scale: ${scale.toFixed(2)})`);
+                console.log("Model loaded", scale);
             }, undefined, (e) => {
-                setDebugStatus("Error al cargar GLB");
+                setDebugStatus("Error de carga GLB");
                 console.error(e);
             });
 
             anchor.onTargetFound = () => {
                 overlayEl.classList.add('hidden');
-                const p = uiEl.querySelector('p');
-                if (p) p.innerHTML = `<span style="color:#00ff00">●</span> <strong>${config?.title}:</strong> ¡Visto!`;
+                setDebugStatus("¡Objetivo Detectado!");
                 playAudio();
             };
 
             anchor.onTargetLost = () => {
                 overlayEl.classList.remove('hidden');
-                overlayEl.innerHTML = `<div style="border: 2px dashed rgba(255,255,255,0.4); padding: 15px; border-radius: 10px;"><p style="margin:0">Buscando imagen...</p></div>`;
-                const p = uiEl.querySelector('p');
-                if (p) p.innerHTML = `<span style="color:#ffcc00">○</span> <strong>Encuentro AR:</strong> ${config?.title}`;
+                setDebugStatus("Buscando imagen...");
             };
 
             await mindarThree.start();
-            setDebugStatus("Motor iniciado. Escanea la hoja.");
-            overlayEl.innerHTML = `<div style="border: 2px dashed rgba(255,255,255,0.5); padding: 20px; border-radius: 10px;"><p style="margin:0">Encuadra la hoja del libro</p></div>`;
-
-            const video = document.querySelector('video');
-            if (video) {
-                video.style.position = 'fixed';
-                video.style.top = '0'; video.style.left = '0';
-                video.style.width = '100vw'; video.style.height = '100vh';
-                video.style.objectFit = 'cover';
-                video.style.zIndex = '0';
-            }
+            setDebugStatus("Escanea la hoja");
+            overlayEl.innerHTML = `<div style="border: 2px dashed rgba(255,255,255,0.5); padding: 20px; border-radius: 10px;"><p style="margin:0">Encuadra la imagen</p></div>`;
 
             renderer.setAnimationLoop(() => {
                 renderer.render(scene, camera);
@@ -308,11 +252,7 @@ async function setupMindAR() {
 
         } catch (err: any) {
             console.error(err);
-            startBtn.innerHTML = "Reintentar";
-            startBtn.style.background = "#dc3545";
-            startBtn.style.opacity = "1";
-            startBtn.style.pointerEvents = "auto";
-            setDebugStatus(`Error: ${err.message}`);
+            setDebugStatus(`Fallo: ${err.message}`);
         }
     });
 }
@@ -324,27 +264,18 @@ function setupIOS() {
 
 function setupDesktop() {
     overlayEl.classList.add('hidden');
-    updateUI("Modo Vista 3D");
+    updateUI("Desktop View");
     const container = document.createElement('div');
     document.body.appendChild(container);
-
     scene = new THREE.Scene();
     camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
     camera.position.set(0, 0, 2);
-
     renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.domElement.style.position = 'fixed';
-    renderer.domElement.style.top = '0';
-    renderer.domElement.style.left = '0';
-    renderer.domElement.style.width = '100vw';
-    renderer.domElement.style.height = '100vh';
+    renderer.domElement.style.top = '0'; renderer.domElement.style.left = '0';
     container.appendChild(renderer.domElement);
-
     scene.add(new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1));
-    scene.add(new THREE.AmbientLight(0xffffff, 0.5));
-
     controls = new OrbitControls(camera, renderer.domElement);
 
     if (navigator.mediaDevices?.getUserMedia) {
@@ -354,16 +285,14 @@ function setupDesktop() {
         video.style.width = '100vw'; video.style.height = '100vh';
         video.style.objectFit = 'cover'; video.style.zIndex = '-1';
         navigator.mediaDevices.getUserMedia({ video: { facingMode: currentFacingMode } }).then(stream => {
-            document.body.appendChild(video);
-            video.srcObject = stream;
-            video.play();
+            document.body.appendChild(video); video.srcObject = stream; video.play();
         }).catch(() => { });
     }
 
     const loader = new GLTFLoader();
     loader.load(config!.model_url, (gltf) => {
         const model = gltf.scene;
-        model.position.set(0.5, -0.4, 0.5);
+        model.position.set(0, -0.4, 0);
         scene.add(model);
         placedObject = model;
     });
@@ -372,15 +301,11 @@ function setupDesktop() {
         controls.update();
         renderer.render(scene, camera);
     });
-
     window.addEventListener('click', () => playAudio());
 }
 
 function playAudio() {
-    if (audio) {
-        audio.currentTime = 0;
-        audio.play().catch(() => { });
-    }
+    if (audio) { audio.currentTime = 0; audio.play().catch(() => { }); }
 }
 
 let lastTouchX = 0;
