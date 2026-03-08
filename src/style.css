@@ -19,6 +19,7 @@ body {
   place-items: center;
   min-width: 320px;
   min-height: 100vh;
+  overflow: hidden;
 }
 
 #app {
@@ -88,16 +89,6 @@ button:focus-visible {
   color: white;
   padding: 20px;
   box-sizing: border-box;
-}
-
-video,
-canvas {
-  position: fixed !important;
-  top: 0 !important;
-  left: 0 !important;
-  width: 100vw !important;
-  height: 100vh !important;
-  object-fit: cover !important;
 }
 
 .hidden {
