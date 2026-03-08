@@ -223,20 +223,62 @@ async function setupMindAR() {
 
             const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
             scene.add(light);
-            const ambient = new THREE.AmbientLight(0xffffff, 0.5);
+            const ambient = new THREE.AmbientLight(0xffffff, 0.7);
             scene.add(ambient);
+            const directional = new THREE.DirectionalLight(0xffffff, 0.5);
+            directional.position.set(0, 1, 1);
+            scene.add(directional);
 
             const anchor = mindarThree.addAnchor(0);
 
+            // 1. Debug Cube to verify anchor
+            const debugBox = new THREE.Mesh(
+                new THREE.BoxGeometry(0.2, 0.2, 0.2),
+                new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: true })
+            );
+            debugBox.position.set(0, 0.1, 0);
+            anchor.group.add(debugBox);
+
+            // 2. Refactored GLB Loader
             const loader = new GLTFLoader();
             loader.load(config!.model_url, (gltf) => {
                 const model = gltf.scene;
-                // Scale 1.0 means the model is the same width as the marker
-                model.scale.set(0.5, 0.5, 0.5);
-                model.rotation.x = Math.PI / 2; // Flat on the image
+
+                // Reset transformations
+                model.position.set(0, 0, 0);
+                model.rotation.set(0, 0, 0);
+                model.scale.set(1, 1, 1);
+
+                // Disable frustum culling for everything in the model
+                model.traverse((node: any) => {
+                    if (node.isMesh) {
+                        node.frustumCulled = false;
+                    }
+                });
+
+                // Calculate real size and center
+                const box = new THREE.Box3().setFromObject(model);
+                const size = box.getSize(new THREE.Vector3());
+                const center = box.getCenter(new THREE.Vector3());
+
+                // Center the model relative to its own geometry
+                model.position.x += (model.position.x - center.x);
+                model.position.y += (model.position.y - center.y);
+                model.position.z += (model.position.z - center.z);
+
+                // Scale automatically (Target: 1.0 unit relative to marker width)
+                const maxDim = Math.max(size.x, size.y, size.z);
+                const scaleFactor = 1.0 / (maxDim || 1);
+                model.scale.multiplyScalar(scaleFactor);
+
+                // Small vertical offset to avoid clipping
+                model.position.y += 0.05;
+
                 anchor.group.add(model);
                 placedObject = model;
-                console.log("Model successfully loaded and scaled (0.5)");
+                console.log(`Model visible! Scale: ${scaleFactor}, Size:`, size);
+            }, undefined, (error) => {
+                console.error("Falla crítica al cargar el modelo 3D:", error);
             });
 
             let isFound = false;
