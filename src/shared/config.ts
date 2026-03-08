@@ -2,6 +2,7 @@ export interface EnvConfig {
     slug: string;
     title: string;
     model_url: string;
+    target_url?: string; // MindAR marker file
     usdz_url?: string;
     audio_preview_url: string;
     min_accuracy_m: number;

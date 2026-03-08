@@ -2,6 +2,7 @@
     "slug": "matecito",
     "title": "Matecito",
     "model_url": "/cdn/models/matecito_basic.glb",
+    "target_url": "/cdn/targets/matecito_marker.mind",
     "usdz_url": "/cdn/models/MATECITO.usdz",
     "audio_preview_url": "/cdn/audio/nature_simple.wav",
     "min_accuracy_m": 1,
