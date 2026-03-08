@@ -157,13 +157,31 @@ async function setupMindAR() {
             // Patch getUserMedia
             const originalGetUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
             navigator.mediaDevices.getUserMedia = async (constraints: any) => {
-                if (constraints && constraints.video) {
-                    constraints.video = {
-                        facingMode: currentFacingMode,
-                        width: { ideal: 1280 }
-                    };
+                try {
+                    if (constraints && constraints.video) {
+                        if (typeof constraints.video === 'boolean') {
+                            constraints.video = { facingMode: currentFacingMode, width: { ideal: 1280 } };
+                        } else {
+                            constraints.video.facingMode = currentFacingMode;
+                            constraints.video.width = { ideal: 1280 };
+                        }
+                    }
+                    return await originalGetUserMedia(constraints);
+                } catch (e: any) {
+                    console.error("getUserMedia Error:", e);
+                    if (e.name === 'NotReadableError' || (e.message && e.message.includes('in use'))) {
+                        throw new Error("Cámara en uso por otra app/pestaña. Recarga la página.");
+                    } else if (e.name === 'OverconstrainedError' || e.name === 'ConstraintNotSatisfiedError') {
+                        console.warn("Camera fallback: trying without facingMode constraints");
+                        if (constraints && typeof constraints.video === 'object') {
+                            delete constraints.video.facingMode;
+                            delete constraints.video.width;
+                            delete constraints.video.height;
+                        }
+                        return await originalGetUserMedia(constraints);
+                    }
+                    throw e;
                 }
-                return await originalGetUserMedia(constraints);
             };
 
             mindarThree = new MIND.IMAGE.MindARThree({
@@ -275,8 +293,13 @@ async function setupMindAR() {
             window.addEventListener('touchstart', handleTouchStart);
 
         } catch (err: any) {
-            console.error(err);
-            setDebugStatus(`Fallo: ${err.message}`);
+            console.error("MindAR Setup Error:", err);
+            setDebugStatus(`Fallo: ${err?.message || 'Error desconocido'}`);
+            if (startBtn) {
+                startBtn.innerHTML = "Reintentar";
+                startBtn.style.background = "#dc3545"; // Red color for error
+                startBtn.style.pointerEvents = "auto";
+            }
         }
     });
 }
