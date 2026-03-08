@@ -223,33 +223,46 @@ async function setupMindAR() {
 
             const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
             scene.add(light);
+            const ambient = new THREE.AmbientLight(0xffffff, 0.5);
+            scene.add(ambient);
 
             const anchor = mindarThree.addAnchor(0);
 
             const loader = new GLTFLoader();
             loader.load(config!.model_url, (gltf) => {
                 const model = gltf.scene;
-                model.scale.set(0.1, 0.1, 0.1);
+                // Scale 1.0 means the model is the same width as the marker
+                model.scale.set(0.5, 0.5, 0.5);
+                model.rotation.x = Math.PI / 2; // Flat on the image
                 anchor.group.add(model);
                 placedObject = model;
-                console.log("Model successfully loaded into AR anchor");
+                console.log("Model successfully loaded and scaled (0.5)");
             });
 
+            let isFound = false;
+
             anchor.onTargetFound = () => {
+                if (isFound) return;
+                isFound = true;
                 console.log("!!! Target Image Detected !!!");
                 overlayEl.classList.add('hidden');
                 const p = uiEl.querySelector('p');
-                if (p) p.innerHTML = `<strong>${config?.title}:</strong> ¡Detectado!`;
+                if (p) p.innerHTML = `<span style="color:#00ff00">●</span> <strong>${config?.title}:</strong> ¡Visto!`;
                 playAudio();
                 track('ar_target_found', { slug: config!.slug });
             };
 
             anchor.onTargetLost = () => {
+                isFound = false;
                 console.log("Target Lost");
                 overlayEl.classList.remove('hidden');
-                overlayEl.innerHTML = '<p>Buscando la hoja del libro...</p>';
+                overlayEl.innerHTML = `
+                    <div style="border: 2px dashed rgba(255,255,255,0.4); padding: 15px; border-radius: 10px;">
+                        <p style="margin:0">Buscando la hoja del libro...</p>
+                    </div>
+                `;
                 const p = uiEl.querySelector('p');
-                if (p) p.innerHTML = `<strong>Encuentro AR:</strong> ${config?.title}`;
+                if (p) p.innerHTML = `<span style="color:#ffcc00">○</span> <strong>Encuentro AR:</strong> ${config?.title}`;
                 track('ar_target_lost', { slug: config!.slug });
             };
 
@@ -257,10 +270,10 @@ async function setupMindAR() {
             await mindarThree.start();
             console.log("MindAR Engine Started Successfully");
 
-            // Success - Reset UI to scanning state
+            // Success - Initial scanning UI
             overlayEl.innerHTML = `
                 <div style="border: 2px dashed rgba(255,255,255,0.5); padding: 20px; border-radius: 10px;">
-                    <p>Encuadra la hoja del libro en la pantalla</p>
+                    <p style="margin:0">Encuadra la hoja del libro en la pantalla</p>
                 </div>
             `;
 
