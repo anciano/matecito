@@ -195,7 +195,9 @@ async function setupMindAR() {
                 arContainer.style.width = '100vw';
                 arContainer.style.height = '100vh';
                 arContainer.style.overflow = 'hidden';
-                arContainer.style.zIndex = '-1'; // Behind UI but visible
+                // CRUCIAL: Must be positive so it's not hidden behind the body background
+                // but lower than UI elements (z-index 90-100)
+                arContainer.style.zIndex = '1';
                 document.body.appendChild(arContainer);
             }
 
