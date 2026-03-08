@@ -76,11 +76,12 @@ async function init() {
     }
 }
 
-function updateUI() {
+function updateUI(statusMsg: string = "") {
     if (!config) return;
     uiEl.innerHTML = `
         <div style="pointer-events: auto;">
             <p style="margin:0"><strong>Encuentro AR:</strong> ${config.title}</p>
+            <div id="debug-status" style="font-size: 10px; color: #aaa; margin-top: 4px;">${statusMsg}</div>
             <button id="camera-toggle" style="
                 margin-top: 8px;
                 padding: 5px 10px;
@@ -95,6 +96,11 @@ function updateUI() {
     `;
 
     document.getElementById('camera-toggle')?.addEventListener('click', toggleCamera);
+}
+
+function setDebugStatus(msg: string) {
+    const el = document.getElementById('debug-status');
+    if (el) el.innerText = msg;
 }
 
 async function toggleCamera() {
@@ -146,7 +152,7 @@ async function initAR() {
 
 async function setupMindAR() {
     if (!config?.target_url) return;
-    updateUI();
+    updateUI("Iniciando...");
 
     overlayEl.classList.remove('hidden');
     overlayEl.innerHTML = `
@@ -173,27 +179,20 @@ async function setupMindAR() {
         startBtn.style.pointerEvents = "none";
 
         try {
-            // 1. Dynamic load MindAR 1.1.4
+            setDebugStatus("Cargando MindAR 1.1.4...");
             await loadScript('https://cdn.jsdelivr.net/npm/mind-ar@1.1.4/dist/mindar-image-three.prod.js');
 
             const MIND = (window as any).MINDAR;
-            if (!MIND) throw new Error("La librería MindAR no se registró en el objeto global.");
+            if (!MIND) throw new Error("MindAR fallo al registrarse.");
 
-            // 2. Verify marker reachable
-            console.log("Checking target file:", config!.target_url);
-            const checkRes = await fetch(config!.target_url!, { method: 'HEAD' });
-            if (!checkRes.ok) throw new Error(`El archivo .mind no está accesible en ${config!.target_url}`);
+            setDebugStatus("Cargando modelo...");
 
-            // 3. Patch getUserMedia for high precision
+            // Patch getUserMedia
             const originalGetUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
             navigator.mediaDevices.getUserMedia = async (constraints: any) => {
                 if (constraints && constraints.video) {
                     if (typeof constraints.video === 'boolean') {
-                        constraints.video = {
-                            facingMode: currentFacingMode,
-                            width: { ideal: 1280 },
-                            height: { ideal: 720 }
-                        };
+                        constraints.video = { facingMode: currentFacingMode, width: { ideal: 1280 } };
                     } else {
                         constraints.video.facingMode = currentFacingMode;
                     }
@@ -206,7 +205,6 @@ async function setupMindAR() {
                 imageTargetSrc: config!.target_url!,
                 uiLoading: "no",
                 uiScanning: "no",
-                // Removed aggressive filters to speed up detection
             });
 
             const { renderer: mRenderer, scene: mScene, camera: mCamera } = mindarThree;
@@ -214,124 +212,92 @@ async function setupMindAR() {
             scene = mScene;
             camera = mCamera;
 
-            renderer.domElement.style.position = 'fixed';
-            renderer.domElement.style.top = '0';
-            renderer.domElement.style.left = '0';
-            renderer.domElement.style.width = '100vw';
-            renderer.domElement.style.height = '100vh';
-            renderer.domElement.style.zIndex = '1';
+            // Tone mapping for better colors
+            renderer.outputColorSpace = THREE.SRGBColorSpace;
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
 
             const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
             scene.add(light);
-            const ambient = new THREE.AmbientLight(0xffffff, 0.7);
-            scene.add(ambient);
-            const directional = new THREE.DirectionalLight(0xffffff, 0.5);
-            directional.position.set(0, 1, 1);
-            scene.add(directional);
+            scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+            const sun = new THREE.DirectionalLight(0xffffff, 1);
+            sun.position.set(1, 1, 1);
+            scene.add(sun);
 
             const anchor = mindarThree.addAnchor(0);
 
-            // 1. Debug Cube to verify anchor
+            // Debug Cube
             const debugBox = new THREE.Mesh(
-                new THREE.BoxGeometry(0.2, 0.2, 0.2),
+                new THREE.BoxGeometry(0.1, 0.1, 0.1),
                 new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: true })
             );
-            debugBox.position.set(0, 0.1, 0);
+            debugBox.position.z = 0.05; // Elevated on MindAR Z-axis (forward)
             anchor.group.add(debugBox);
 
-            // 2. Refactored GLB Loader
+            // GLB Loader
             const loader = new GLTFLoader();
             loader.load(config!.model_url, (gltf) => {
                 const model = gltf.scene;
 
-                // Reset transformations
-                model.position.set(0, 0, 0);
-                model.rotation.set(0, 0, 0);
-                model.scale.set(1, 1, 1);
-
-                // Disable frustum culling for everything in the model
+                // Disable frustum culling
                 model.traverse((node: any) => {
                     if (node.isMesh) {
                         node.frustumCulled = false;
+                        // node.material.color.set(0xff0000); // TEMP DEBUG
                     }
                 });
 
-                // Calculate real size and center
+                // Auto scaling & centering
                 const box = new THREE.Box3().setFromObject(model);
                 const size = box.getSize(new THREE.Vector3());
                 const center = box.getCenter(new THREE.Vector3());
 
-                // Center the model relative to its own geometry
-                model.position.x += (model.position.x - center.x);
-                model.position.y += (model.position.y - center.y);
-                model.position.z += (model.position.z - center.z);
+                // Reset then reposition
+                model.position.set(-center.x, -center.y, -center.z);
 
-                // Scale automatically (Target: 1.0 unit relative to marker width)
+                // Scale to roughly 1/2 of marker size
                 const maxDim = Math.max(size.x, size.y, size.z);
-                const scaleFactor = 1.0 / (maxDim || 1);
-                model.scale.multiplyScalar(scaleFactor);
+                const scale = 0.5 / (maxDim || 1);
+                model.scale.set(scale, scale, scale);
 
-                // Small vertical offset to avoid clipping
+                // MindAR coordinate system tip: Typically marker is XY, Z is out.
+                // Let's rotate it to stand up.
+                model.rotation.x = Math.PI / 2;
                 model.position.y += 0.05;
 
                 anchor.group.add(model);
                 placedObject = model;
-                console.log(`Model visible! Scale: ${scaleFactor}, Size:`, size);
-            }, undefined, (error) => {
-                console.error("Falla crítica al cargar el modelo 3D:", error);
+                setDebugStatus(`Modelo Listo (Scale: ${scale.toFixed(2)})`);
+                console.log("Model loaded successfully", { scale, size });
+            }, undefined, (e) => {
+                setDebugStatus("Error al cargar GLB");
+                console.error(e);
             });
 
-            let isFound = false;
-
             anchor.onTargetFound = () => {
-                if (isFound) return;
-                isFound = true;
-                console.log("!!! Target Image Detected !!!");
                 overlayEl.classList.add('hidden');
                 const p = uiEl.querySelector('p');
                 if (p) p.innerHTML = `<span style="color:#00ff00">●</span> <strong>${config?.title}:</strong> ¡Visto!`;
                 playAudio();
-                track('ar_target_found', { slug: config!.slug });
             };
 
             anchor.onTargetLost = () => {
-                isFound = false;
-                console.log("Target Lost");
                 overlayEl.classList.remove('hidden');
-                overlayEl.innerHTML = `
-                    <div style="border: 2px dashed rgba(255,255,255,0.4); padding: 15px; border-radius: 10px;">
-                        <p style="margin:0">Buscando la hoja del libro...</p>
-                    </div>
-                `;
+                overlayEl.innerHTML = `<div style="border: 2px dashed rgba(255,255,255,0.4); padding: 15px; border-radius: 10px;"><p style="margin:0">Buscando imagen...</p></div>`;
                 const p = uiEl.querySelector('p');
                 if (p) p.innerHTML = `<span style="color:#ffcc00">○</span> <strong>Encuentro AR:</strong> ${config?.title}`;
-                track('ar_target_lost', { slug: config!.slug });
             };
 
-            console.log("Starting MindAR Engine...");
             await mindarThree.start();
-            console.log("MindAR Engine Started Successfully");
-
-            // Success - Initial scanning UI
-            overlayEl.innerHTML = `
-                <div style="border: 2px dashed rgba(255,255,255,0.5); padding: 20px; border-radius: 10px;">
-                    <p style="margin:0">Encuadra la hoja del libro en la pantalla</p>
-                </div>
-            `;
+            setDebugStatus("Motor iniciado. Escanea la hoja.");
+            overlayEl.innerHTML = `<div style="border: 2px dashed rgba(255,255,255,0.5); padding: 20px; border-radius: 10px;"><p style="margin:0">Encuadra la hoja del libro</p></div>`;
 
             const video = document.querySelector('video');
             if (video) {
-                video.setAttribute('playsinline', '');
-                video.setAttribute('webkit-playsinline', '');
-                video.muted = true;
                 video.style.position = 'fixed';
-                video.style.top = '0';
-                video.style.left = '0';
-                video.style.width = '100vw';
-                video.style.height = '100vh';
+                video.style.top = '0'; video.style.left = '0';
+                video.style.width = '100vw'; video.style.height = '100vh';
                 video.style.objectFit = 'cover';
                 video.style.zIndex = '0';
-                video.play().catch(() => { });
             }
 
             renderer.setAnimationLoop(() => {
@@ -341,36 +307,24 @@ async function setupMindAR() {
             window.addEventListener('touchstart', handleTouchStart);
 
         } catch (err: any) {
-            console.error("MindAR Error:", err);
-            startBtn.innerHTML = "Error al iniciar";
+            console.error(err);
+            startBtn.innerHTML = "Reintentar";
             startBtn.style.background = "#dc3545";
             startBtn.style.opacity = "1";
             startBtn.style.pointerEvents = "auto";
-            uiEl.innerHTML += `<p style="color:#ffcc00; font-size:11px; margin-top:5px;">${err.message}</p>`;
+            setDebugStatus(`Error: ${err.message}`);
         }
     });
 }
 
 function setupIOS() {
-    uiEl.innerHTML += `
-        <div style="margin-top: 1rem; pointer-events: auto;">
-            <a href="${config?.usdz_url}" rel="ar" style="
-                display: inline-block;
-                padding: 10px 20px;
-                background: #007AFF;
-                color: white;
-                text-decoration: none;
-                border-radius: 10px;
-                font-weight: bold;
-            ">Ver en AR Nativo (Quick Look)</a>
-        </div>
-    `;
+    uiEl.innerHTML += `<div style="margin-top: 1rem; pointer-events: auto;"><a href="${config?.usdz_url}" rel="ar" style="display: inline-block; padding: 10px 20px; background: #007AFF; color: white; text-decoration: none; border-radius: 10px; font-weight: bold;">Ver en AR Nativo</a></div>`;
     setupDesktop();
 }
 
 function setupDesktop() {
     overlayEl.classList.add('hidden');
-    updateUI();
+    updateUI("Modo Vista 3D");
     const container = document.createElement('div');
     document.body.appendChild(container);
 
@@ -388,26 +342,18 @@ function setupDesktop() {
     renderer.domElement.style.height = '100vh';
     container.appendChild(renderer.domElement);
 
-    const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
-    scene.add(light);
+    scene.add(new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1));
+    scene.add(new THREE.AmbientLight(0xffffff, 0.5));
 
     controls = new OrbitControls(camera, renderer.domElement);
 
     if (navigator.mediaDevices?.getUserMedia) {
         const video = document.createElement('video');
-        video.setAttribute('playsinline', '');
-        video.muted = true;
-        video.style.position = 'fixed';
-        video.style.top = '0';
-        video.style.left = '0';
-        video.style.width = '100vw';
-        video.style.height = '100vh';
-        video.style.objectFit = 'cover';
-        video.style.zIndex = '-1';
-
-        navigator.mediaDevices.getUserMedia({
-            video: { facingMode: currentFacingMode }
-        }).then(stream => {
+        video.setAttribute('playsinline', ''); video.muted = true;
+        video.style.position = 'fixed'; video.style.top = '0'; video.style.left = '0';
+        video.style.width = '100vw'; video.style.height = '100vh';
+        video.style.objectFit = 'cover'; video.style.zIndex = '-1';
+        navigator.mediaDevices.getUserMedia({ video: { facingMode: currentFacingMode } }).then(stream => {
             document.body.appendChild(video);
             video.srcObject = stream;
             video.play();
