@@ -184,8 +184,23 @@ async function setupMindAR() {
                 }
             };
 
+            // Create a dedicated container for MindAR
+            let arContainer = document.getElementById('ar-container');
+            if (!arContainer) {
+                arContainer = document.createElement('div');
+                arContainer.id = 'ar-container';
+                arContainer.style.position = 'fixed';
+                arContainer.style.top = '0';
+                arContainer.style.left = '0';
+                arContainer.style.width = '100vw';
+                arContainer.style.height = '100vh';
+                arContainer.style.overflow = 'hidden';
+                arContainer.style.zIndex = '-1'; // Behind UI but visible
+                document.body.appendChild(arContainer);
+            }
+
             mindarThree = new MIND.IMAGE.MindARThree({
-                container: document.body,
+                container: arContainer,
                 imageTargetSrc: config!.target_url!,
                 uiLoading: "no",
                 uiScanning: "no",
