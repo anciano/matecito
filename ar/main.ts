@@ -173,11 +173,13 @@ async function setupMindAR() {
         startBtn.style.pointerEvents = "none";
 
         try {
-            // 1. Dynamic load MindAR (Essential to have window.THREE set first)
-            await loadScript('https://cdn.jsdelivr.net/npm/mind-ar@1.2.2/dist/mindar-image-three.prod.js');
+            console.log("Initializing MindAR 1.1.4 with facingMode:", currentFacingMode);
+
+            // 1. Dynamic load MindAR 1.1.4 (Confirmed UMD/Global version)
+            await loadScript('https://cdn.jsdelivr.net/npm/mind-ar@1.1.4/dist/mindar-image-three.prod.js');
 
             const MIND = (window as any).MINDAR;
-            if (!MIND) throw new Error("La librería MindAR no se registró correctamente.");
+            if (!MIND) throw new Error("La librería MindAR no se registró en el objeto global.");
 
             // 2. Verify marker
             const checkRes = await fetch(config!.target_url!, { method: 'HEAD' });
