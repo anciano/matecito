@@ -87,15 +87,14 @@ function updateUI() {
 async function toggleCamera() {
     currentFacingMode = currentFacingMode === 'environment' ? 'user' : 'environment';
 
-    // Update URL without reloading (optional, but good for bookmarking)
+    // Update URL without reloading
     const url = new URL(window.location.href);
     url.searchParams.set('facingMode', currentFacingMode);
     window.history.replaceState({}, '', url.toString());
 
     if (currentPlatform === Platform.MindAR && mindarThree) {
-        // Restart MindAR with new camera
         await mindarThree.stop();
-        // Remove old video/canvas tags that MindAR might have added
+        // Remove old video/canvas tags
         const tags = document.querySelectorAll('video, canvas');
         tags.forEach(t => {
             if (t.parentNode === document.body && t !== renderer.domElement) {
@@ -104,7 +103,6 @@ async function toggleCamera() {
         });
         setupMindAR();
     } else {
-        // For Desktop/Fallback, we might need a full reload or just restart setupDesktop
         window.location.reload();
     }
 }
@@ -112,7 +110,6 @@ async function toggleCamera() {
 async function checkPlatform() {
     const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
 
-    // If config has target_url, we prefer MindAR
     if (config?.target_url) {
         currentPlatform = Platform.MindAR;
         return;
@@ -138,75 +135,116 @@ async function initAR() {
 
 async function setupMindAR() {
     if (!config?.target_url) return;
-    updateUI(); // Refresh UI to show the correct camera mode
+    updateUI();
 
-    // Before starting, we override the navigator.mediaDevices.getUserMedia to force the facing mode
-    // MindAR uses this internally.
-    const originalGetUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
-    navigator.mediaDevices.getUserMedia = (constraints: any) => {
-        if (constraints && constraints.video) {
-            if (typeof constraints.video === 'boolean') {
-                constraints.video = { facingMode: currentFacingMode };
-            } else {
-                constraints.video.facingMode = currentFacingMode;
+    // On mobile, Safari requires a user gesture to start the camera
+    overlayEl.innerHTML = `
+        <div style="text-align: center;">
+            <p>Apunta la cámara a la hoja del libro...</p>
+            <button id="start-ar-btn" style="
+                margin-top: 15px;
+                padding: 12px 24px;
+                background: #28a745;
+                color: white;
+                border: none;
+                border-radius: 50px;
+                font-size: 16px;
+                font-weight: bold;
+                cursor: pointer;
+                box-shadow: 0 4px 6px rgba(0,0,0,0.2);
+            ">Iniciar Cámara</button>
+        </div>
+    `;
+
+    document.getElementById('start-ar-btn')?.addEventListener('click', async () => {
+        const btn = document.getElementById('start-ar-btn');
+        if (btn) btn.innerHTML = "Cargando...";
+
+        try {
+            // Before starting, we override the navigator.mediaDevices.getUserMedia
+            const originalGetUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+            navigator.mediaDevices.getUserMedia = (constraints: any) => {
+                if (constraints && constraints.video) {
+                    if (typeof constraints.video === 'boolean') {
+                        constraints.video = {
+                            facingMode: currentFacingMode,
+                            width: { ideal: 1280 },
+                            height: { ideal: 720 }
+                        };
+                    } else {
+                        constraints.video.facingMode = currentFacingMode;
+                    }
+                }
+                return originalGetUserMedia(constraints);
+            };
+
+            // Initialize MindAR Three.js wrapper
+            mindarThree = new (window as any).MINDAR.IMAGE.MindARThree({
+                container: document.body,
+                imageTargetSrc: config!.target_url!,
+                uiLoading: "no",
+                uiScanning: "no",
+            });
+
+            const { renderer: mindRenderer, scene: mindScene, camera: mindCamera } = mindarThree;
+            renderer = mindRenderer;
+            scene = mindScene;
+            camera = mindCamera;
+
+            const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
+            scene.add(light);
+
+            const anchor = mindarThree.addAnchor(0);
+
+            const loader = new GLTFLoader();
+            loader.load(config!.model_url, (gltf) => {
+                const model = gltf.scene;
+                model.scale.set(0.1, 0.1, 0.1);
+                anchor.group.add(model);
+                placedObject = model;
+                track('ar_model_loaded', { slug: config!.slug });
+            });
+
+            anchor.onTargetFound = () => {
+                overlayEl.classList.add('hidden');
+                const statusP = uiEl.querySelector('p');
+                if (statusP) statusP.innerHTML = `<strong>${config?.title}:</strong> ¡Imagen detectada!`;
+                track('ar_target_found', { slug: config!.slug });
+                playAudio();
+            };
+
+            anchor.onTargetLost = () => {
+                overlayEl.classList.remove('hidden');
+                const statusP = uiEl.querySelector('p');
+                if (statusP) statusP.innerHTML = `<strong>Encuentro AR:</strong> ${config?.title}`;
+                track('ar_target_lost', { slug: config!.slug });
+            };
+
+            await mindarThree.start();
+
+            // Find video and ensure playsinline
+            const video = document.querySelector('video');
+            if (video) {
+                video.setAttribute('playsinline', '');
+                video.setAttribute('webkit-playsinline', '');
+                video.setAttribute('muted', '');
+                video.muted = true;
+                video.play().catch(e => console.error("Video play failed", e));
             }
+
+            renderer.setAnimationLoop(() => {
+                renderer.render(scene, camera);
+            });
+
+            window.addEventListener('touchstart', handleTouchStart);
+
+            overlayEl.innerHTML = '<p>Apunta la cámara a la hoja del libro...</p>';
+
+        } catch (err) {
+            console.error(err);
+            if (btn) btn.innerHTML = "Error (Reintentar)";
         }
-        return originalGetUserMedia(constraints);
-    };
-
-    // Initialize MindAR Three.js wrapper
-    mindarThree = new (window as any).MINDAR.IMAGE.MindARThree({
-        container: document.body,
-        imageTargetSrc: config.target_url,
-        uiLoading: "no",
-        uiScanning: "no",
     });
-
-    const { renderer: mindRenderer, scene: mindScene, camera: mindCamera } = mindarThree;
-    renderer = mindRenderer;
-    scene = mindScene;
-    camera = mindCamera;
-
-    const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
-    scene.add(light);
-
-    // Anchor for the first target
-    const anchor = mindarThree.addAnchor(0);
-
-    // Load model and add to anchor
-    const loader = new GLTFLoader();
-    loader.load(config.model_url, (gltf) => {
-        const model = gltf.scene;
-        model.scale.set(0.1, 0.1, 0.1); // Adjust scale for marker
-        anchor.group.add(model);
-        placedObject = model;
-        track('ar_model_loaded', { slug: config!.slug });
-    });
-
-    // Events
-    anchor.onTargetFound = () => {
-        overlayEl.classList.add('hidden');
-        const statusP = uiEl.querySelector('p');
-        if (statusP) statusP.innerHTML = `<strong>${config?.title}:</strong> ¡Imagen detectada!`;
-        track('ar_target_found', { slug: config!.slug });
-        playAudio();
-    };
-
-    anchor.onTargetLost = () => {
-        overlayEl.classList.remove('hidden');
-        const statusP = uiEl.querySelector('p');
-        if (statusP) statusP.innerHTML = `<strong>Encuentro AR:</strong> ${config?.title}`;
-        track('ar_target_lost', { slug: config!.slug });
-    };
-
-    await mindarThree.start();
-
-    renderer.setAnimationLoop(() => {
-        renderer.render(scene, camera);
-    });
-
-    // Touch interaction for rotation/scale
-    window.addEventListener('touchstart', handleTouchStart);
 }
 
 function setupIOS() {
@@ -229,6 +267,7 @@ function setupIOS() {
 
 function setupDesktop() {
     overlayEl.classList.add('hidden');
+    updateUI();
     const container = document.createElement('div');
     document.body.appendChild(container);
 
@@ -249,6 +288,10 @@ function setupDesktop() {
     // Webcam background
     if (navigator.mediaDevices?.getUserMedia) {
         const video = document.createElement('video');
+        video.setAttribute('playsinline', '');
+        video.setAttribute('muted', '');
+        video.muted = true;
+
         navigator.mediaDevices.getUserMedia({
             video: { facingMode: currentFacingMode }
         }).then(stream => {
