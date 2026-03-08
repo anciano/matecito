@@ -178,6 +178,14 @@ async function setupMindAR() {
             scene = mScene;
             camera = mCamera;
 
+            // CRUCIAL: Force renderer canvas to be full screen and above video
+            renderer.domElement.style.position = 'fixed';
+            renderer.domElement.style.top = '0';
+            renderer.domElement.style.left = '0';
+            renderer.domElement.style.width = '100vw';
+            renderer.domElement.style.height = '100vh';
+            renderer.domElement.style.zIndex = '1';
+
             // Simple basic scene setup for visibility
             const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
             scene.add(light);
@@ -243,6 +251,22 @@ async function setupMindAR() {
             await mindarThree.start();
             setDebugStatus("Escanea la hoja");
             overlayEl.innerHTML = `<div style="border: 2px dashed rgba(255,255,255,0.5); padding: 20px; border-radius: 10px;"><p style="margin:0">Encuadra la imagen</p></div>`;
+
+            // CRUCIAL: Force video to be full screen and below canvas
+            const video = document.querySelector('video');
+            if (video) {
+                video.setAttribute('playsinline', '');
+                video.setAttribute('webkit-playsinline', '');
+                video.muted = true;
+                video.style.position = 'fixed';
+                video.style.top = '0';
+                video.style.left = '0';
+                video.style.width = '100vw';
+                video.style.height = '100vh';
+                video.style.objectFit = 'cover';
+                video.style.zIndex = '0';
+                video.play().catch(() => { });
+            }
 
             renderer.setAnimationLoop(() => {
                 renderer.render(scene, camera);
