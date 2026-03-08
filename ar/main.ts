@@ -5,6 +5,9 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { loadEnv, getSlugFromUrl, EnvConfig } from '../src/shared/config';
 import { track } from '../src/shared/analytics';
 
+// EXPOSE THREE GLOBALLY for MindAR
+(window as any).THREE = THREE;
+
 declare const MINDAR: any;
 
 let uiEl: HTMLElement;
@@ -28,6 +31,18 @@ enum Platform {
 let currentPlatform: Platform = Platform.Desktop;
 let mindarThree: any = null;
 let currentFacingMode: 'user' | 'environment' = 'environment';
+
+// Helper to load external scripts
+function loadScript(src: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+        if (document.querySelector(`script[src="${src}"]`)) return resolve();
+        const script = document.createElement('script');
+        script.src = src;
+        script.onload = () => resolve();
+        script.onerror = () => reject(new Error(`Falló la carga de: ${src}`));
+        document.head.appendChild(script);
+    });
+}
 
 async function init() {
     uiEl = document.getElementById('ar-ui')!;
@@ -90,7 +105,6 @@ async function toggleCamera() {
     window.history.replaceState({}, '', url.toString());
 
     if (currentPlatform === Platform.MindAR && mindarThree) {
-        console.log("Stopping MindAR for camera toggle...");
         await mindarThree.stop();
         const tags = document.querySelectorAll('video, canvas');
         tags.forEach(t => {
@@ -154,27 +168,27 @@ async function setupMindAR() {
 
     const startBtn = document.getElementById('start-ar-btn');
     startBtn?.addEventListener('click', async () => {
-        startBtn.innerHTML = "Permitiendo acceso...";
+        startBtn.innerHTML = "Cargando motor AR...";
         startBtn.style.opacity = "0.7";
         startBtn.style.pointerEvents = "none";
 
         try {
-            console.log("Initializing MindAR with facingMode:", currentFacingMode);
+            // 1. Dynamic load MindAR (Essential to have window.THREE set first)
+            await loadScript('https://cdn.jsdelivr.net/npm/mind-ar@1.2.2/dist/mindar-image-three.prod.js');
 
             const MIND = (window as any).MINDAR;
-            if (!MIND) throw new Error("Librería AR no detectada.");
+            if (!MIND) throw new Error("La librería MindAR no se registró correctamente.");
 
+            // 2. Verify marker
             const checkRes = await fetch(config!.target_url!, { method: 'HEAD' });
             if (!checkRes.ok) throw new Error("Archivo .mind no encontrado.");
 
-            // Patch getUserMedia
+            // 3. Patch getUserMedia
             const originalGetUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
             navigator.mediaDevices.getUserMedia = async (constraints: any) => {
                 if (constraints && constraints.video) {
                     if (typeof constraints.video === 'boolean') {
-                        constraints.video = {
-                            facingMode: currentFacingMode
-                        };
+                        constraints.video = { facingMode: currentFacingMode };
                     } else {
                         constraints.video.facingMode = currentFacingMode;
                     }
@@ -187,7 +201,7 @@ async function setupMindAR() {
                 imageTargetSrc: config!.target_url!,
                 uiLoading: "no",
                 uiScanning: "no",
-                filterMinCF: 0.0001, // Smooth tracking
+                filterMinCF: 0.0001,
                 filterBeta: 0.001,
             });
 
@@ -214,11 +228,9 @@ async function setupMindAR() {
                 model.scale.set(0.1, 0.1, 0.1);
                 anchor.group.add(model);
                 placedObject = model;
-                console.log("Model loaded for MindAR anchor");
             });
 
             anchor.onTargetFound = () => {
-                console.log("Target Found!");
                 overlayEl.classList.add('hidden');
                 const p = uiEl.querySelector('p');
                 if (p) p.innerHTML = `<strong>${config?.title}:</strong> ¡Detectado!`;
@@ -226,18 +238,13 @@ async function setupMindAR() {
             };
 
             anchor.onTargetLost = () => {
-                console.log("Target Lost");
                 overlayEl.classList.remove('hidden');
                 overlayEl.innerHTML = '<p>Apunta la cámara a la hoja del libro...</p>';
                 const p = uiEl.querySelector('p');
                 if (p) p.innerHTML = `<strong>Encuentro AR:</strong> ${config?.title}`;
             };
 
-            console.log("Starting MindAR engine...");
             await mindarThree.start();
-            console.log("MindAR engine started successfully.");
-
-            // RESET UI IMMEDIATELY
             overlayEl.innerHTML = '<p>Apunta la cámara a la hoja del libro...</p>';
 
             const video = document.querySelector('video');
@@ -252,7 +259,7 @@ async function setupMindAR() {
                 video.style.height = '100vh';
                 video.style.objectFit = 'cover';
                 video.style.zIndex = '0';
-                video.play().catch(e => console.warn("Video play error:", e));
+                video.play().catch(() => { });
             }
 
             renderer.setAnimationLoop(() => {
@@ -263,7 +270,7 @@ async function setupMindAR() {
 
         } catch (err: any) {
             console.error("MindAR Setup Error:", err);
-            startBtn.innerHTML = "Error (Reintentar)";
+            startBtn.innerHTML = "Reintentar";
             startBtn.style.background = "#dc3545";
             startBtn.style.opacity = "1";
             startBtn.style.pointerEvents = "auto";
@@ -314,7 +321,6 @@ function setupDesktop() {
 
     controls = new OrbitControls(camera, renderer.domElement);
 
-    // Webcam background
     if (navigator.mediaDevices?.getUserMedia) {
         const video = document.createElement('video');
         video.setAttribute('playsinline', '');
@@ -333,9 +339,7 @@ function setupDesktop() {
             document.body.appendChild(video);
             video.srcObject = stream;
             video.play();
-        }).catch(err => {
-            console.error("Webcam error:", err);
-        });
+        }).catch(() => { });
     }
 
     const loader = new GLTFLoader();
@@ -357,7 +361,7 @@ function setupDesktop() {
 function playAudio() {
     if (audio) {
         audio.currentTime = 0;
-        audio.play().catch(e => console.warn('Audio play failed', e));
+        audio.play().catch(() => { });
     }
 }
 
